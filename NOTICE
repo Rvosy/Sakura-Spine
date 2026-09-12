@@ -1,0 +1,7 @@
+Sakura Spine 插件的原创代码使用根目录 LICENSE 中的 MIT 许可证。
+vendor/spine-webgl.mjs 不适用 MIT，使用 vendor/SPINE-LICENSE 中的
+Spine Runtimes Software License v2.5；其来源见 vendor/README.md。
+
+初始代码提取自 Rvosy/Sakura 的 plugins/optional/sakura_spine，插件版本 0.2.5。
+来源提交：225bf19ca650800073cdd567dedc7846fcb59acf
+https://github.com/Rvosy/Sakura/tree/225bf19ca650800073cdd567dedc7846fcb59acf/plugins/optional/sakura_spine

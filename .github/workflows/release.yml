@@ -1,0 +1,44 @@
+name: 验证与发布插件
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: node --test tests/controller.test.mjs
+      - run: python -m py_compile plugin.py tools/package.py
+      - run: python tools/package.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sakura.visual.spine
+          path: dist/sakura.visual.spine.zip
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tools/package.py --tag "$RELEASE_TAG"
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+      - run: gh release create "$RELEASE_TAG" dist/sakura.visual.spine.zip --verify-tag --title "Spine $RELEASE_TAG" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
