@@ -5,3 +5,8 @@ Spine Runtimes Software License v2.5；其来源见 vendor/README.md。
 初始代码提取自 Rvosy/Sakura 的 plugins/optional/sakura_spine，插件版本 0.2.5。
 来源提交：225bf19ca650800073cdd567dedc7846fcb59acf
 https://github.com/Rvosy/Sakura/tree/225bf19ca650800073cdd567dedc7846fcb59acf/plugins/optional/sakura_spine
+
+本次同步自 Rvosy/Sakura 的 plugins/builtin/sakura_spine。
+来源提交：86657b31615c80c456b10b920c56fe398ceba35a
+https://github.com/Rvosy/Sakura/tree/86657b31615c80c456b10b920c56fe398ceba35a/plugins/builtin/sakura_spine
+独立仓库版本调整为 0.2.6。

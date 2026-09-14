@@ -6,7 +6,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ["plugin.yaml", "plugin.py", "controller.mjs", "editor.mjs", "renderer.mjs",
-         "studio.mjs", "README.md", "LICENSE", "NOTICE"]
+         "studio.mjs", "hit-test.mjs", "README.md", "LICENSE", "NOTICE"]
 DIRECTORIES = ["vendor", "preview"]
 
 

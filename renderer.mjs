@@ -1,8 +1,9 @@
 import { spine } from './vendor/spine-webgl.mjs';
 import { createSpineController } from './controller.mjs';
+import { readTextureAlpha, sampleTriangles } from './hit-test.mjs';
 
 export async function createRenderer({ container, rendererData, resolveAssetUrl, bindingId, resourceId,
-  signal, onLayout = () => {}, onError = () => {} }) {
+  signal, onLayout = () => {}, onError = () => {}, enableHitTest = false }) {
   const canvas = document.createElement('canvas');
   canvas.className = 'spine-canvas';
   canvas.setAttribute('aria-label', 'Spine 角色预览');
@@ -10,11 +11,20 @@ export async function createRenderer({ container, rendererData, resolveAssetUrl,
   const abort = new AbortController();
   const textures = new Map();
   const bitmaps = [];
+  const alphaMasks = new Map();
+  const hitStats = { queries: 0, totalMs: 0, maxMs: 0, alphaBytes: 0 };
+  let pendingHit = null, activeHit = null;
   let shader, batcher, controller, observer, frame = 0, disposed = false, paused = false;
   let gl, lastTime, draw;
   const dispose = () => {
     if (disposed) return;
     disposed = true;
+    pendingHit?.resolve(true);
+    activeHit?.resolve(true);
+    pendingHit = null;
+    activeHit = null;
+    alphaMasks.clear();
+    hitStats.alphaBytes = 0;
     abort.abort();
     signal?.removeEventListener('abort', freeze);
     observer?.disconnect();
@@ -39,6 +49,11 @@ export async function createRenderer({ container, rendererData, resolveAssetUrl,
   function freeze() {
     abort.abort();
     paused = true;
+    pendingHit?.resolve(true);
+    pendingHit = null;
+    alphaMasks.clear();
+    hitStats.alphaBytes = 0;
+    enableHitTest = false;
     cancelAnimationFrame(frame);
     observer?.disconnect();
   }
@@ -68,7 +83,18 @@ export async function createRenderer({ container, rendererData, resolveAssetUrl,
       if (disposed || signal?.aborted) { bitmap.close(); checkActive(); }
       bitmaps.push(bitmap);
       if (Math.max(bitmap.width, bitmap.height) > gl.getParameter(gl.MAX_TEXTURE_SIZE)) throw new Error('SPINE_TEXTURE_TOO_LARGE');
-      textures.set(page, new spine.webgl.GLTexture(context, bitmap));
+      const texture = new spine.webgl.GLTexture(context, bitmap);
+      textures.set(page, texture);
+      if (enableHitTest && hitStats.alphaBytes + bitmap.width * bitmap.height > 64 * 1024 * 1024) {
+        enableHitTest = false;
+        alphaMasks.clear();
+        hitStats.alphaBytes = 0;
+      }
+      if (enableHitTest) {
+        const mask = readTextureAlpha(bitmap);
+        alphaMasks.set(texture, mask);
+        hitStats.alphaBytes += mask.alpha.length;
+      }
     }
     const atlas = new spine.TextureAtlas(atlasText, page => {
       if (!textures.has(page)) throw new Error('SPINE_ATLAS_TEXTURE_MISSING');
@@ -81,28 +107,72 @@ export async function createRenderer({ container, rendererData, resolveAssetUrl,
     if (![offset.x, offset.y, size.x, size.y].every(Number.isFinite) || size.x <= 0 || size.y <= 0) throw new Error('SPINE_BOUNDS_INVALID');
     shader = spine.webgl.Shader.newTwoColoredTextured(context);
     batcher = new spine.webgl.PolygonBatcher(context);
+    let blendSource = gl.ONE, blendDestination = gl.ONE_MINUS_SRC_ALPHA;
+    const submit = batcher.draw.bind(batcher), blend = batcher.setBlendMode.bind(batcher);
+    batcher.setBlendMode = (source, destination) => {
+      blendSource = source; blendDestination = destination;
+      return blend(source, destination);
+    };
+    batcher.draw = (texture, vertices, triangles) => {
+      if (activeHit) {
+        const started = performance.now();
+        activeHit.alpha = sampleTriangles(alphaMasks.get(texture), vertices, triangles,
+          activeHit.x, activeHit.y, activeHit.alpha, blendSource, blendDestination);
+        activeHit.ms += performance.now() - started;
+      }
+      return submit(texture, vertices, triangles);
+    };
     const painter = new spine.webgl.SkeletonRenderer(context);
     // Both source encodings reach the GPU as premultiplied colors. This also
     // keeps framebuffer alpha correct when translucent slots overlap.
     painter.premultipliedAlpha = true;
     const matrix = new spine.webgl.Matrix4();
     const centerX = offset.x + size.x / 2, centerY = offset.y + size.y / 2;
-    function resize() {
-      if (disposed) return;
+    const maxViewport = gl.getParameter(gl.MAX_VIEWPORT_DIMS);
+    const maxBuffer = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);
+    let layoutWidth, layoutHeight;
+    function updateSize() {
       const width = Math.max(1, container.clientWidth), height = Math.max(1, container.clientHeight);
-      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-      canvas.width = Math.round(width * pixelRatio);
-      canvas.height = Math.round(height * pixelRatio);
-      const scale = Math.max(size.x / width, size.y / height) * 1.16;
-      const worldWidth = width * scale, worldHeight = height * scale;
-      matrix.ortho2d(centerX - worldWidth / 2, centerY - worldHeight / 2, worldWidth, worldHeight);
-      gl.viewport(0, 0, canvas.width, canvas.height);
-      onLayout({ width, height, bounds: { x: (width - size.x / scale) / 2, y: (height - size.y / scale) / 2,
-        width: size.x / scale, height: size.y / scale } });
+      // The host scales the surface and its ancestors with CSS transforms.
+      // ResizeObserver sees only layout size; sample the displayed size and DPR
+      // before drawing so zoom and monitor changes cannot stretch a stale buffer.
+      const rect = canvas.getBoundingClientRect();
+      const pixelRatio = window.devicePixelRatio || 1;
+      const desiredWidth = Math.max(1, Math.ceil(rect.width * pixelRatio));
+      const desiredHeight = Math.max(1, Math.ceil(rect.height * pixelRatio));
+      // Bound GPU allocation for unusually large windows without imposing a
+      // fixed DPR ceiling on ordinary high-density displays.
+      const limit = Math.min(1, maxViewport[0] / desiredWidth, maxViewport[1] / desiredHeight,
+        maxBuffer / desiredWidth, maxBuffer / desiredHeight,
+        Math.sqrt(16_777_216 / (desiredWidth * desiredHeight)));
+      const bufferWidth = Math.max(1, Math.floor(desiredWidth * limit));
+      const bufferHeight = Math.max(1, Math.floor(desiredHeight * limit));
+      if (canvas.width !== bufferWidth || canvas.height !== bufferHeight) {
+        if (canvas.width !== bufferWidth) canvas.width = bufferWidth;
+        if (canvas.height !== bufferHeight) canvas.height = bufferHeight;
+        gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+      }
+      if (layoutWidth !== width || layoutHeight !== height) {
+        layoutWidth = width; layoutHeight = height;
+        const scale = Math.max(size.x / width, size.y / height) * 1.16;
+        const worldWidth = width * scale, worldHeight = height * scale;
+        matrix.ortho2d(centerX - worldWidth / 2, centerY - worldHeight / 2, worldWidth, worldHeight);
+        onLayout({ width, height, bounds: { x: (width - size.x / scale) / 2, y: (height - size.y / scale) / 2,
+          width: size.x / scale, height: size.y / scale } });
+      }
+    }
+    function resize() {
       draw?.();
     }
     draw = () => {
       if (disposed) return;
+      updateSize();
+      if (pendingHit) {
+        const scale = Math.max(size.x / layoutWidth, size.y / layoutHeight) * 1.16;
+        activeHit = { ...pendingHit, x: centerX + (pendingHit.point[0] - 0.5) * layoutWidth * scale,
+          y: centerY + (0.5 - pendingHit.point[1]) * layoutHeight * scale, alpha: 0, ms: 0 };
+        pendingHit = null;
+      }
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       shader.bind();
@@ -112,6 +182,13 @@ export async function createRenderer({ container, rendererData, resolveAssetUrl,
       painter.draw(batcher, skeleton);
       batcher.end();
       shader.unbind();
+      if (activeHit) {
+        hitStats.queries++;
+        hitStats.totalMs += activeHit.ms;
+        hitStats.maxMs = Math.max(hitStats.maxMs, activeHit.ms);
+        activeHit.resolve(activeHit.alpha >= 0.02);
+        activeHit = null;
+      }
     };
     function tick(time) {
       if (disposed || paused) return;
@@ -140,6 +217,29 @@ export async function createRenderer({ container, rendererData, resolveAssetUrl,
         if (!paused) frame = requestAnimationFrame(tick);
       },
       snapshot: () => controller.snapshot(),
+      hitTest(point) {
+        if (disposed) return Promise.reject(new Error('SPINE_HIT_TEST_UNAVAILABLE'));
+        if (!enableHitTest || signal?.aborted) return Promise.resolve(true);
+        if (!point.every(Number.isFinite) || point.some(v => v < 0 || v > 1)) return Promise.resolve(false);
+        pendingHit?.resolve(true);
+        return new Promise(resolve => {
+          pendingHit = { point, resolve };
+          if (paused) draw();
+        });
+      },
+      hitTestStats: () => ({ ...hitStats }),
+      hasHitTest: () => enableHitTest,
+      disableHitTest() { enableHitTest = false; alphaMasks.clear(); hitStats.alphaBytes = 0; },
+      capture() {
+        if (disposed || signal?.aborted) return null;
+        draw();
+        const image = document.createElement('canvas');
+        const ratio = Math.min(1, 256 / Math.max(canvas.width, canvas.height));
+        image.width = Math.max(1, Math.round(canvas.width * ratio));
+        image.height = Math.max(1, Math.round(canvas.height * ratio));
+        image.getContext('2d').drawImage(canvas, 0, 0, image.width, image.height);
+        return image.toDataURL('image/png');
+      },
       dispose,
     };
   } catch (error) { dispose(); throw error; }
@@ -149,6 +249,7 @@ export async function createRenderer({ container, rendererData, resolveAssetUrl,
 // receives a local sequence for its separate state and action deliveries.
 export async function mount({ container, resource, host, signal }) {
   const renderer = await createRenderer({ container, rendererData: resource.data,
+    enableHitTest: typeof host.setHitTest === 'function',
     bindingId: resource.bindingId, resourceId: resource.resourceId, signal,
     resolveAssetUrl(path) {
       if (!Object.hasOwn(resource.assets, path)) throw new Error('SPINE_ASSET_LOAD_FAILED');
@@ -171,6 +272,9 @@ export async function mount({ container, resource, host, signal }) {
       const accepted = await host.setSurface({ width: Math.max(1, Math.round(renderer.size.width * ratio)),
         height: Math.max(1, Math.round(renderer.size.height * ratio)) });
       if (!signal.aborted && accepted === false) throw new Error('SPINE_SURFACE_REJECTED');
+      if (!signal.aborted && host.setHitTest && renderer.hasHitTest()) {
+        if (!await host.setHitTest(renderer.hitTest)) renderer.disableHitTest();
+      }
     }),
     snapshotState() {
       const { skin, animation, speed } = renderer.snapshot();
