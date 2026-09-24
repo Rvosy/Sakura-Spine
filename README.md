@@ -5,31 +5,31 @@ Sakura 的 Spine 3.6 表现插件，提供表情切换、循环动画、一次�
 | 项目 | 值 |
 | --- | --- |
 | 插件 ID | `sakura.visual.spine` |
-| 当前版本 | `0.2.6` |
+| 源码版本 | `0.2.7` |
 | Plugin API | `4` |
 | 形态资源类型 | `spine.json@1` |
 | 宿主服务 | `sakura.host.character`、`sakura.host.logging` |
 
-## 0.2.6 更新
+<a id="026-更新"></a>
 
-同步 Sakura 内置插件的透明区域命中检测、高清渲染缓冲、工坊预览缩放与拖动、视图恢复和缩略图生成。
+## 0.2.7 更新
+
+0.2.6 同步了当时 Sakura 内置插件的透明区域命中检测、高清渲染缓冲、工坊预览缩放与拖动、视图恢复和缩略图生成。
 表情名称按资源配置显示，未配置时使用原始名称；资源加载和编辑预览错误接入宿主日志。
-新增必需服务 `sakura.host.logging`，透明区域命中检测需要宿主提供 `setHitTest` 接口。
+该版本新增必需服务 `sakura.host.logging`，透明区域命中检测需要宿主提供 `setHitTest` 接口。
 
-本次只更新源码版本，最新已发布安装包仍为 `v0.2.5`。安装本次更新请从源码打包。
+0.2.7 继续修正半透明纹理合成和资源兼容性。插件市场已收录 0.2.7；本仓库独立 Release 的最新附件仍为 `v0.2.5`，请通过市场或对应源码安装新版。
 
 ## 安装
 
-下载 [最新安装包](https://github.com/Rvosy/Sakura-Spine/releases/latest/download/sakura.visual.spine.zip)，
-在 Sakura 的插件设置中从 ZIP 安装，然后启用 Spine。也可以下载指定版本，例如
-[v0.2.5](https://github.com/Rvosy/Sakura-Spine/releases/download/v0.2.5/sakura.visual.spine.zip)。
+在“设置 → 插件 → 市场”搜索 Spine 并安装，再到“已安装”中启用。市场版本由 [Sakura Registry](https://github.com/Rvosy/Sakura-Registry) 从固定源码构建。
+
+也可以从“更多 → 从 ZIP 安装…”导入源码包或独立 Release 附件。独立 [v0.2.5 安装包](https://github.com/Rvosy/Sakura-Spine/releases/download/v0.2.5/sakura.visual.spine.zip)保留用于该版本，不包含 0.2.6 和 0.2.7 的改动。
 
 安装包根目录直接包含 `plugin.yaml`。GitHub 的标签源码 ZIP 也保留可识别的单层目录。
 从 Git 克隆后可运行 `python3 tools/package.py`，安装生成的 `dist/sakura.visual.spine.zip`，无需复制整个 Sakura 仓库。
 
-插件需要支持正式表现插件和角色工坊接口的 Sakura 桌面版本。本次代码同步自
-[Sakura 86657b31](https://github.com/Rvosy/Sakura/commit/86657b31615c80c456b10b920c56fe398ceba35a)，
-不据此承诺旧版已发布客户端支持全部功能。插件后端仅使用 Python 标准库，前端运行库随包提供。
+插件需要支持正式表现插件、角色工坊和透明区域鼠标检测接口的 Sakura 桌面版本，建议使用支持插件市场的新版。宿主服务要求见 `plugin.yaml`。插件后端仅使用 Python 标准库，前端运行库随包提供。
 
 启用后，在“角色工坊 → 角色形态”导入 `.visual`，或添加 Spine 形态再导入模型目录。
 表情按钮用于预览，“表情名称”可改按钮文字；“默认表情”单独设置角色加载时的表情。
@@ -60,7 +60,7 @@ Sakura 的 Spine 3.6 表现插件，提供表情切换、循环动画、一次�
 皮肤、动画、文件名和透明方式必须按实际素材填写。只含基础部件的皮肤应从 `selectableSkins` 排除。
 `.visual` 的打包工具与独立预览服务器仍由 [Sakura](https://github.com/Rvosy/Sakura) 的 `tools.spine_preview` 提供；
 本仓库的 `preview/` 页面需由该服务器托管，不能直接双击 HTML 使用。
-完整接口见 [Spine 插件规范](https://github.com/Rvosy/Sakura/blob/86657b31615c80c456b10b920c56fe398ceba35a/docs/specs/runtime-v2/spine-visual-plugin.md)。
+完整接口见 [Spine 插件规范](https://github.com/Rvosy/Sakura/blob/main/docs/specs/runtime-v2/spine-visual-plugin.md)。
 
 ## 开发和发布
 
@@ -77,7 +77,7 @@ GitHub Actions 会验证插件并生成 Release，附件固定为 `sakura.visual
 
 后续下载器可查询 [最新 Release API](https://api.github.com/repos/Rvosy/Sakura-Spine/releases/latest)，
 读取 `tag_name` 与 `assets`，选择 `sakura.visual.spine.zip` 对应的 `browser_download_url`。
-这里只提供独立版本和下载入口，Sakura 主程序的自动下载与更新尚未接入。
+此 API 只查询本仓库的独立 Release。Sakura 插件市场使用 Registry 目录，两处的可用版本可能不同；在市场更新时，以市场显示的版本为准。
 
 初始代码来自 Sakura 的 `plugins/optional/sakura_spine`，来源提交见 [NOTICE](NOTICE)。
 主仓库中的现有副本保留，当前没有自动双向同步；更新独立仓库后需单独决定是否同步主仓库副本。
